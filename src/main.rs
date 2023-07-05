@@ -1,60 +1,41 @@
 #![allow(non_snake_case)]
-
-mod api;
-
-use api::types::*;
 use dioxus::prelude::*;
-use dioxus::router::*;
 
 fn main() {
-    dioxus::web::launch(app);
+    dioxus_web::launch(app);
 }
 
 fn app(cx: Scope) -> Element {
     cx.render(rsx! {
-        Router {
-            div { class: "app mb-2",
-                div { class: "bg-gray-900 mb-3",
-                    nav { class: "container flex flex-row space-x-4 mx-auto py-4",
-                        Link { to: "/", class: "text-center font-bold text-gray-200 hover:text-gray-100 transition", "HN" }
-                        Link { to: "/new", class: "text-center font-bold text-gray-200 hover:text-gray-100 transition", "Latest" }
-                        Link { to: "/best", class: "text-center font-bold text-gray-200 hover:text-gray-100 transition", "Best" }
-                        Link { to: "/show", class: "text-center font-bold text-gray-200 hover:text-gray-100 transition", "Show" }
-                        div { class: "flex-1" }
-                        Link { to: "https://dioxuslabs.com", class: "font-light text-white", "Built with Dioxus" }
-                    }
-                }
-                div { class: "container mx-auto",
-                    Route { to: "/", Stories { sort: StorySorting::Top } }
-                    Route { to: "/new", Stories { sort: StorySorting::New } }
-                    Route { to: "/best", Stories { sort: StorySorting::Best } }
-                    Route { to: "/show", Stories { sort: StorySorting::Show } }
-                    Route { to: "/item/:id", StorySubmission {} }
-                }
-            }
+        div {
+            div { Stories {} }
         }
     })
 }
 
-#[inline_props]
-fn Stories(cx: Scope, sort: StorySorting) -> Element {
-    let story = use_future(&cx, || api::get_stories(*sort));
+fn Stories(cx: Scope) -> Element {
+    let story = use_future(&cx, (), |_| get_stories(10));
 
     let stories = match story.value() {
-        Some(Ok(list)) => list.iter().map(|story| rsx!(StoryListing { story: story })),
-        Some(Err(e)) => return cx.render(rsx! { "An error occured" }),
-        None => return cx.render(rsx! { "Loading items" }),
+        Some(Ok(list)) => rsx! {
+            for story in list {
+                StoryListing { story: story }
+            }
+        },
+        Some(Err(_)) => return cx.render(rsx! {"An error occured"}),
+        None => return cx.render(rsx! {"Loading items"}),
     };
 
     cx.render(rsx! {
-        ul { class: "list-none space-y-2", stories }
+        div {
+            stories
+        }
     })
 }
 
 #[inline_props]
 fn StoryListing<'a>(cx: Scope<'a>, story: &'a StoryItem) -> Element {
     let StoryItem {
-        id,
         title,
         url,
         by,
@@ -65,111 +46,111 @@ fn StoryListing<'a>(cx: Scope<'a>, story: &'a StoryItem) -> Element {
     } = story;
 
     let url = url.as_deref().unwrap_or_default();
-    let hostname = web_sys::Url::new(url)
-        .map(|url| {
-            let mut hostname = url.hostname();
-            if hostname.starts_with("www.") {
-                hostname = hostname[4..].to_string();
-            }
-            hostname
-        })
-        .ok()
-        .unwrap_or_default();
+    let hostname = url.trim_start_matches("https://").trim_start_matches("http://").trim_start_matches("www.");
+    let score = format!("{score} {}", if *score == 1 { " point" } else { " points" });
+    let comments = format!(
+        "{} {}",
+        kids.len(),
+        if kids.len() == 1 {
+            " comment"
+        } else {
+            " comments"
+        }
+    );
+    let time = time.format("%D %l:%M %p");
 
     cx.render(rsx! {
-        li { class: "rounded border border-gray-300 p-1",
+        div {
+            padding: "0.5rem",
             div {
-                Link { to: "{url}", external: true, class: "font-semibold", "{title}" },
-                match hostname.as_str() {
+                font_size: "1.5rem",
+                a {
+                    href: "{url}",
+                    "{title}"
+                }
+                match hostname {
                     "" => rsx!{ "" },
-                    name => rsx!{ span { class: "text-gray-600 text-sm", " ({name})" } },
+                    name => rsx!{
+                        a {
+                            color: "gray",
+                            href: "https://news.ycombinator.com/from?site={name}",
+                            text_decoration: "none",
+                            " ({name})"
+                        }
+                    },
                 }
             }
-            div { class: "text-sm text-gray-600",
-                span { [format_args!("{score} {}", if *score == 1 { " point" } else { " points" })] }
-                " by " Link { to: "user/{by}", "{by}" }
-                " | " span { [format_args!("{}", time.format("%D %l:%M %p"))] } " | "
-                span {
-                    Link { to: "item/{id}",
-                        [format_args!("{} {}", kids.len(), if kids.len() == 1 { " comment" } else { " comments" })]
-                    }
+            div {
+                display: "flex",
+                flex_direction: "row",
+                color: "gray",
+                div {
+                    padding_left: "0.5rem",
+                    "{score}"
+                }
+                div {
+                    padding_left: "0.5rem",
+                    "by {by}"
+                }
+                div {
+                    padding_left: "0.5rem",
+                    "{time}"
+                }
+                div {
+                    padding_left: "0.5rem",
+                    "{comments}"
                 }
             }
         }
     })
 }
 
-#[inline_props]
-fn StorySubmission(cx: Scope) -> Element {
-    let item_id = use_route(&cx).segment::<i64>("id")?.ok()?;
 
-    let item = use_future(&cx, || api::get_story(item_id));
+// Define the API
 
-    let story = match item.value() {
-        Some(Ok(a)) => a,
-        Some(Err(e)) => return cx.render(rsx! { "An error occured" }),
-        None => return cx.render(rsx! { "Loading items" }),
-    };
+use futures::future::join_all;
 
-    let StoryItem {
-        id,
-        title,
-        url,
-        by,
-        score,
-        time,
-        kids,
-        ..
-    } = &story.item;
+pub static BASE_API_URL: &str = "https://hacker-news.firebaseio.com/v0/";
 
-    let hostname = web_sys::Url::new(url.as_deref().unwrap_or_default())
-        .map(|url| {
-            let mut hostname = url.hostname();
-            if hostname.starts_with("www.") {
-                hostname = hostname[4..].to_string();
-            }
-            hostname
-        })
-        .ok();
 
-    // TODO: user view in app
-    let by_url = format!("user/{}", by);
-    let kids_url = format!("item/{}", id);
-    let kids_len = kids.len();
-
-    cx.render(rsx! {
-        ul { class: "list-none mb-2"
-
-        }
-        ul { class: "list-none",
-            match story.comments.is_empty() {
-                true => rsx!( "No Comments Yet" ),
-                false => rsx!( story.comments.iter().map(|comment| rsx!( Comment { comment: comment }) ) ),
-            }
-        }
-    })
+pub async fn get_story_preview(id: i64) -> Result<StoryItem, reqwest::Error> {
+    let url = format!("{}item/{}.json", BASE_API_URL, id);
+    Ok(reqwest::get(&url).await?.json().await?)
 }
 
-#[inline_props]
-fn Comment<'a>(cx: Scope<'a>, comment: &'a Comment) -> Element {
-    let Comment {
-        by,
-        text,
-        time,
-        sub_comments,
-        ..
-    } = comment;
+pub async fn get_stories(count: usize) -> Result<Vec<StoryItem>, reqwest::Error> {
+    let url = format!("{}topstories.json", BASE_API_URL);
+    let stories_ids = reqwest::get(&url).await?.json::<Vec<i64>>().await?;
 
-    cx.render(rsx! {
-        li { class: "mt-2",
-            div { class: "mb-2 text-gray-600 border-t border-gray-300",
-                Link { to: "user/{by}", class: "font-semibold", "{by}" },
-                " | " span { [format_args!("{}", time.format("%D %l:%M %p"))] }
-            }
-            p { dangerous_inner_html: "{text}" }
-            ul { class: "list-none ml-5",
-                sub_comments.iter().map(|comment| rsx!(Comment { comment: comment }))
-            }
-        }
-    })
+    let story_futures = stories_ids[..usize::min(stories_ids.len(), count)]
+        .iter()
+        .map(|&story_id| get_story_preview(story_id));
+    let stories = join_all(story_futures)
+        .await
+        .into_iter()
+        .filter_map(|story| story.ok())
+        .collect();
+    Ok(stories)
+}
+
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct StoryItem {
+    pub id: i64,
+    pub title: String,
+    pub url: Option<String>,
+    pub text: Option<String>,
+    #[serde(default)]
+    pub by: String,
+    #[serde(default)]
+    pub score: i64,
+    #[serde(default)]
+    pub descendants: i64,
+    #[serde(with = "chrono::serde::ts_seconds")]
+    pub time: DateTime<Utc>,
+    #[serde(default)]
+    pub kids: Vec<i64>,
+    pub r#type: String,
 }
